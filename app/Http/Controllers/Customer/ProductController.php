@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers\Customer;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ProductResource;
@@ -9,7 +9,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
-class CustomerProductController extends Controller
+class ProductController extends Controller
 {
     public function __construct(
         protected CustomerProductService $customerProductService,
@@ -17,7 +17,7 @@ class CustomerProductController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $products = $this->customerProductService->getProducts(
+        $products = $this->customerProductService->index(
             search: $request->query('search'),
             minPrice: $request->query('min_price'),
             maxPrice: $request->query('max_price'),
@@ -30,9 +30,9 @@ class CustomerProductController extends Controller
         );
     }
 
-    public function show(Request $request): JsonResponse
+    public function show(int $product): JsonResponse
     {
-        $product = $this->customerProductService->getProduct((int) $request->route('product'));
+        $product = $this->customerProductService->show($product);
 
         if ($product === null) {
             return $this->errorResponse('Product is not available.', Response::HTTP_NOT_FOUND);

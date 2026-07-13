@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Interfaces\ProductRepositoryInterface;
 use App\Models\Product;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Symfony\Component\HttpFoundation\Response;
 
 class CustomerProductService
 {
@@ -12,7 +13,7 @@ class CustomerProductService
         protected ProductRepositoryInterface $productRepository,
     ) {}
 
-    public function getProducts(?string $search, ?string $minPrice, ?string $maxPrice, int $perPage = 15): LengthAwarePaginator
+    public function index(?string $search, ?string $minPrice, ?string $maxPrice, int $perPage = 15): LengthAwarePaginator
     {
         $minPrice = $minPrice !== null ? (float) $minPrice : null;
         $maxPrice = $maxPrice !== null ? (float) $maxPrice : null;
@@ -20,8 +21,18 @@ class CustomerProductService
         return $this->productRepository->getAvailableProducts($search, $minPrice, $maxPrice, $perPage);
     }
 
-    public function getProduct(int $id): ?Product
+    public function show(int $id): ?Product
     {
-        return $this->productRepository->getAvailableProductById($id);
+        $product = $this->productRepository->getAvailableProductById($id);
+
+        if ($product === null) {
+            return null;
+        }
+
+        if (! $product->isActive() || ! $product->isFlashSaleRunning() || ! $product->isInStock()) {
+            return null;
+        }
+
+        return $product;
     }
 }

@@ -31,10 +31,10 @@ class ProductRepository extends BaseRepository implements ProductRepositoryInter
     {
         return $this->model->newQuery()
             ->active()
-            ->inFlashSale()
-            ->available()
+            ->flashSaleRunning()
+            ->inStock()
             ->search($search)
-            ->priceRange($minPrice, $maxPrice)
+            ->priceBetween($minPrice, $maxPrice)
             ->newest()
             ->paginate($perPage);
     }
@@ -43,8 +43,8 @@ class ProductRepository extends BaseRepository implements ProductRepositoryInter
     {
         return $this->model->newQuery()
             ->active()
-            ->inFlashSale()
-            ->available()
+            ->flashSaleRunning()
+            ->inStock()
             ->find($id);
     }
 }

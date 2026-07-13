@@ -61,18 +61,18 @@ class Product extends Model
         return $query->where('status', ProductStatus::Active->value);
     }
 
-    public function scopeInFlashSale(Builder $query): Builder
+    public function scopeFlashSaleRunning(Builder $query): Builder
     {
         return $query->where('flash_sale_start', '<=', now())
             ->where('flash_sale_end', '>=', now());
     }
 
-    public function scopeAvailable(Builder $query): Builder
+    public function scopeInStock(Builder $query): Builder
     {
         return $query->where('available_stock', '>', 0);
     }
 
-    public function scopePriceRange(Builder $query, ?float $minPrice, ?float $maxPrice): Builder
+    public function scopePriceBetween(Builder $query, ?float $minPrice, ?float $maxPrice): Builder
     {
         if ($minPrice !== null) {
             $query->where('price', '>=', $minPrice);
@@ -83,5 +83,28 @@ class Product extends Model
         }
 
         return $query;
+    }
+
+    public function scopeNewest(Builder $query): Builder
+    {
+        return $query->orderByDesc('created_at');
+    }
+
+    public function isActive(): bool
+    {
+        return $this->status === ProductStatus::Active;
+    }
+
+    public function isFlashSaleRunning(): bool
+    {
+        return $this->flash_sale_start !== null
+            && $this->flash_sale_end !== null
+            && $this->flash_sale_start <= now()
+            && $this->flash_sale_end >= now();
+    }
+
+    public function isInStock(): bool
+    {
+        return $this->available_stock > 0;
     }
 }
