@@ -13,7 +13,37 @@ return new class extends Migration
     {
         Schema::create('orders', function (Blueprint $table) {
             $table->id();
+
+            $table->foreignId('user_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->foreignId('coupon_id')
+                ->nullable()
+                ->constrained()
+                ->nullOnDelete();
+
+            $table->decimal('subtotal', 10, 2);
+
+            $table->decimal('discount', 10, 2)->default(0);
+
+            $table->decimal('total', 10, 2);
+
+            $table->enum('payment_status', [
+                'pending',
+                'paid',
+                'failed',
+            ])->default('pending');
+
+            $table->enum('status', [
+                'pending',
+                'completed',
+                'cancelled',
+            ])->default('pending');
+
             $table->timestamps();
+
+            $table->index(['user_id', 'created_at']);
         });
     }
 

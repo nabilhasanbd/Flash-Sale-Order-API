@@ -13,6 +13,20 @@ return new class extends Migration
     {
         Schema::create('idempotency_keys', function (Blueprint $table) {
             $table->id();
+
+            $table->foreignId('user_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->string('idempotency_key')->unique();
+
+            $table->foreignId('order_id')
+                ->nullable()
+                ->constrained()
+                ->nullOnDelete();
+
+            $table->json('request_hash')->nullable();
+
             $table->timestamps();
         });
     }

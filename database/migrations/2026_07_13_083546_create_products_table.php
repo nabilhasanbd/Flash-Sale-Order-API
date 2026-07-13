@@ -13,7 +13,25 @@ return new class extends Migration
     {
         Schema::create('products', function (Blueprint $table) {
             $table->id();
+
+            $table->string('name');
+
+            $table->text('description')->nullable();
+
+            $table->decimal('price', 10, 2);
+
+            $table->unsignedInteger('available_stock');
+
+            $table->timestamp('flash_sale_start');
+
+            $table->timestamp('flash_sale_end');
+
+            $table->enum('status', ['active', 'inactive'])
+                ->default('inactive');
+
             $table->timestamps();
+
+            $table->index(['status', 'flash_sale_start', 'flash_sale_end']);
         });
     }
 

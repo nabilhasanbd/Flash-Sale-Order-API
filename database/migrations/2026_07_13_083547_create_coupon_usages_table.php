@@ -13,7 +13,26 @@ return new class extends Migration
     {
         Schema::create('coupon_usages', function (Blueprint $table) {
             $table->id();
+
+            $table->foreignId('coupon_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->foreignId('user_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            $table->foreignId('order_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
             $table->timestamps();
+
+            $table->unique([
+                'coupon_id',
+                'user_id',
+                'order_id',
+            ]);
         });
     }
 
