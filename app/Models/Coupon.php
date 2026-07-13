@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\CouponType;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
@@ -37,5 +38,20 @@ class Coupon extends Model
     public function couponUsages(): HasMany
     {
         return $this->hasMany(CouponUsage::class);
+    }
+
+    public function scopeActive(Builder $query): Builder
+    {
+        return $query->where('status', true);
+    }
+
+    public function scopeNotExpired(Builder $query): Builder
+    {
+        return $query->where('expires_at', '>', now());
+    }
+
+    public function scopeAvailable(Builder $query): Builder
+    {
+        return $query->whereColumn('used_count', '<', 'usage_limit');
     }
 }
