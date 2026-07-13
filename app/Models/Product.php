@@ -56,8 +56,32 @@ class Product extends Model
         return $query->where('status', $status);
     }
 
-    public function scopeNewest(Builder $query): Builder
+    public function scopeActive(Builder $query): Builder
     {
-        return $query->orderByDesc('created_at');
+        return $query->where('status', ProductStatus::Active->value);
+    }
+
+    public function scopeInFlashSale(Builder $query): Builder
+    {
+        return $query->where('flash_sale_start', '<=', now())
+            ->where('flash_sale_end', '>=', now());
+    }
+
+    public function scopeAvailable(Builder $query): Builder
+    {
+        return $query->where('available_stock', '>', 0);
+    }
+
+    public function scopePriceRange(Builder $query, ?float $minPrice, ?float $maxPrice): Builder
+    {
+        if ($minPrice !== null) {
+            $query->where('price', '>=', $minPrice);
+        }
+
+        if ($maxPrice !== null) {
+            $query->where('price', '<=', $maxPrice);
+        }
+
+        return $query;
     }
 }

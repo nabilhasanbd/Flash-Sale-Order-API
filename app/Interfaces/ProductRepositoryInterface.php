@@ -11,4 +11,8 @@ interface ProductRepositoryInterface extends BaseRepositoryInterface
     public function paginateWithFilters(?string $search, ?string $status, int $perPage = 15): LengthAwarePaginator;
 
     public function findProduct(int $id): ?Product;
+
+    public function getAvailableProducts(?string $search, ?float $minPrice, ?float $maxPrice, int $perPage = 15): LengthAwarePaginator;
+
+    public function getAvailableProductById(int $id): ?Product;
 }

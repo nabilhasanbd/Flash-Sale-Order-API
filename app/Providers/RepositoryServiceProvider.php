@@ -27,6 +27,15 @@ class RepositoryServiceProvider extends ServiceProvider
             \App\Interfaces\CouponRepositoryInterface::class,
             \App\Repositories\CouponRepository::class,
         );
+
+        $this->app->singleton(
+            \App\Services\CustomerProductService::class,
+            function ($app) {
+                return new \App\Services\CustomerProductService(
+                    $app->make(\App\Interfaces\ProductRepositoryInterface::class)
+                );
+            }
+        );
     }
 
     public function boot(): void
