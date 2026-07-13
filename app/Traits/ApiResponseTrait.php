@@ -14,11 +14,16 @@ trait ApiResponseTrait
         string $message = 'Success',
         int $statusCode = Response::HTTP_OK,
     ): JsonResponse {
-        return response()->json([
+        $response = [
             'success' => true,
             'message' => $message,
-            'data' => $data,
-        ], $statusCode);
+        ];
+
+        if ($data !== null) {
+            $response['data'] = $data;
+        }
+
+        return response()->json($response, $statusCode);
     }
 
     protected function errorResponse(
@@ -26,11 +31,16 @@ trait ApiResponseTrait
         int $statusCode = Response::HTTP_BAD_REQUEST,
         mixed $errors = null,
     ): JsonResponse {
-        return response()->json([
+        $response = [
             'success' => false,
             'message' => $message,
-            'errors' => $errors,
-        ], $statusCode);
+        ];
+
+        if ($errors !== null) {
+            $response['errors'] = $errors;
+        }
+
+        return response()->json($response, $statusCode);
     }
 
     protected function resourceResponse(
