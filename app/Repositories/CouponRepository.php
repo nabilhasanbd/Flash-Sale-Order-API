@@ -38,4 +38,12 @@ class CouponRepository extends BaseRepository implements CouponRepositoryInterfa
     {
         return $coupon->save();
     }
+
+    public function expireExpiredCoupons(): int
+    {
+        return $this->model->newQuery()
+            ->where('status', true)
+            ->where('expires_at', '<', now())
+            ->update(['status' => false]);
+    }
 }

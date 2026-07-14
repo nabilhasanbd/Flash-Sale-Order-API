@@ -55,4 +55,12 @@ class ProductRepository extends BaseRepository implements ProductRepositoryInter
             ->lockForUpdate()
             ->first();
     }
+
+    public function expireFinishedFlashSales(): int
+    {
+        return $this->model->newQuery()
+            ->where('status', 'active')
+            ->where('flash_sale_end', '<', now())
+            ->update(['status' => 'inactive']);
+    }
 }

@@ -14,4 +14,6 @@ interface CouponRepositoryInterface extends BaseRepositoryInterface
     public function update(int $id, array $data): bool;
 
     public function save(Coupon $coupon): bool;
+
+    public function expireExpiredCoupons(): int;
 }

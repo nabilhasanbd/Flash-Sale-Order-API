@@ -15,4 +15,6 @@ interface ProductRepositoryInterface extends BaseRepositoryInterface
     public function getAvailableProducts(?string $search, ?float $minPrice, ?float $maxPrice, int $perPage = 15): LengthAwarePaginator;
 
     public function getAvailableProductById(int $id): ?Product;
+
+    public function expireFinishedFlashSales(): int;
 }
