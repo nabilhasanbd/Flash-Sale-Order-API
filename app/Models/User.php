@@ -37,6 +37,21 @@ class User extends Authenticatable
         ];
     }
 
+    public function routeNotificationForMail($notification = null)
+    {
+        return $this->email;
+    }
+
+    public function routeNotificationForSms($notification = null)
+    {
+        return $this->phone ?? null;
+    }
+
+    public function routeNotificationForPush($notification = null)
+    {
+        return $this->deviceTokens ?? [];
+    }
+
     public function wallet(): HasOne
     {
         return $this->hasOne(Wallet::class);

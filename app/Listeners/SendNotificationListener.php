@@ -7,7 +7,7 @@ use App\Jobs\SendNotificationJob;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 
-class SendPurchaseNotification implements ShouldQueue
+class SendNotificationListener implements ShouldQueue
 {
     use InteractsWithQueue;
 

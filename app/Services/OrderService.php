@@ -6,6 +6,7 @@ use App\Interfaces\CouponRepositoryInterface;
 use App\Interfaces\OrderRepositoryInterface;
 use App\Interfaces\ProductRepositoryInterface;
 use App\Interfaces\WalletRepositoryInterface;
+use App\Events\OrderPlaced;
 use App\Exceptions\DuplicatePurchaseException;
 use App\Exceptions\InsufficientBalanceException;
 use App\Exceptions\InsufficientStockException;
@@ -40,7 +41,7 @@ class OrderService
             $discount = (float) $discountData['discount'];
         }
 
-        return DB::transaction(function () use (
+        $order = DB::transaction(function () use (
             $user,
             $productId,
             $quantity,
@@ -130,8 +131,14 @@ class OrderService
                 'description' => 'Flash Sale Purchase',
             ]);
 
-            return $order->fresh();
+            return $order;
         });
+
+        DB::afterCommit(function () use ($order) {
+            event(new OrderPlaced($order));
+        });
+
+        return $order;
     }
 
     private function generateTransactionReference(): string
