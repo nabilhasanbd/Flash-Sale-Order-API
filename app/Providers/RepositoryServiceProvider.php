@@ -45,6 +45,15 @@ class RepositoryServiceProvider extends ServiceProvider
                 );
             }
         );
+
+        $this->app->singleton(
+            \App\Services\WalletService::class,
+            function ($app) {
+                return new \App\Services\WalletService(
+                    $app->make(\App\Interfaces\WalletRepositoryInterface::class)
+                );
+            }
+        );
     }
 
     public function boot(): void
