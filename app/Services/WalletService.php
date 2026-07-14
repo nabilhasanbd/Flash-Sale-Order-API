@@ -27,6 +27,45 @@ class WalletService
         return $wallet->balance >= $amount;
     }
 
+    public function deductInTransaction(
+        User $user,
+        float $amount,
+        int $orderId,
+        string $description = 'Flash Sale Purchase'
+    ): array {
+        $wallet = $this->walletRepository->lockWallet($user);
+
+        if ($wallet === null) {
+            throw new WalletNotFoundException();
+        }
+
+        $balanceBefore = (float) $wallet->balance;
+
+        if ($balanceBefore < $amount) {
+            throw new InsufficientBalanceException();
+        }
+
+        $newBalance = $balanceBefore - $amount;
+
+        $this->walletRepository->updateBalance($wallet, $newBalance);
+
+        $transaction = $this->walletRepository->createTransaction([
+            'wallet_id' => $wallet->id,
+            'order_id' => $orderId,
+            'type' => 'debit',
+            'amount' => $amount,
+            'balance_before' => $balanceBefore,
+            'balance_after' => $newBalance,
+            'reference' => $this->generateReference(),
+            'description' => $description,
+        ]);
+
+        return [
+            'wallet' => $wallet->fresh(),
+            'transaction' => $transaction,
+        ];
+    }
+
     public function deduct(
         User $user,
         float $amount,

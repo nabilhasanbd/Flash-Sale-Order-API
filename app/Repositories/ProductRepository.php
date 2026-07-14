@@ -47,4 +47,12 @@ class ProductRepository extends BaseRepository implements ProductRepositoryInter
             ->inStock()
             ->find($id);
     }
+
+    public function findProductByIdForUpdate(int $id): ?Product
+    {
+        return $this->model->newQuery()
+            ->whereKey($id)
+            ->lockForUpdate()
+            ->first();
+    }
 }

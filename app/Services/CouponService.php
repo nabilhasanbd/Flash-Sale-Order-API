@@ -65,8 +65,6 @@ class CouponService
 
     public function incrementUsage(int $couponId): bool
     {
-        return DB::transaction(function () use ($couponId) {
-            return $this->couponRepository->incrementUsage($couponId);
-        });
+        return $this->couponRepository->incrementUsage($couponId);
     }
 }
