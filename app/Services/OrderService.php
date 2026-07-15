@@ -8,8 +8,11 @@ use App\Interfaces\ProductRepositoryInterface;
 use App\Interfaces\WalletRepositoryInterface;
 use App\Events\OrderPlaced;
 use App\Exceptions\DuplicatePurchaseException;
+use App\Exceptions\FlashSaleNotActiveException;
 use App\Exceptions\InsufficientBalanceException;
 use App\Exceptions\InsufficientStockException;
+use App\Exceptions\MaximumQuantityExceededException;
+use App\Exceptions\ProductInactiveException;
 use App\Models\Coupon;
 use App\Models\Order;
 use App\Models\User;
@@ -53,6 +56,19 @@ class OrderService
 
             if ($product === null) {
                 throw new \Exception('Product not found.');
+            }
+
+            if (!$product->isActive()) {
+                throw new ProductInactiveException();
+            }
+
+            if (!$product->isFlashSaleRunning()) {
+                throw new FlashSaleNotActiveException();
+            }
+
+            $maxQuantity = $product->flash_sale_max_quantity_per_order ?? 3;
+            if ($quantity > $maxQuantity) {
+                throw new MaximumQuantityExceededException($maxQuantity, $quantity);
             }
 
             $availableStock = (int) $product->available_stock;

@@ -2,6 +2,9 @@
 
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
+use App\Exceptions\FlashSaleNotActiveException;
+use App\Exceptions\MaximumQuantityExceededException;
+use App\Exceptions\ProductInactiveException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -36,6 +39,33 @@ return Application::configure(basePath: dirname(__DIR__))
                     'success' => false,
                     'message' => 'Unauthorized',
                 ], Response::HTTP_FORBIDDEN);
+            }
+        });
+
+        $exceptions->render(function (ProductInactiveException $exception, Request $request) {
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $exception->getMessage(),
+                ], Response::HTTP_BAD_REQUEST);
+            }
+        });
+
+        $exceptions->render(function (FlashSaleNotActiveException $exception, Request $request) {
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $exception->getMessage(),
+                ], Response::HTTP_BAD_REQUEST);
+            }
+        });
+
+        $exceptions->render(function (MaximumQuantityExceededException $exception, Request $request) {
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $exception->getMessage(),
+                ], Response::HTTP_BAD_REQUEST);
             }
         });
     })->create();
