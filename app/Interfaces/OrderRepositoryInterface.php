@@ -18,4 +18,12 @@ interface OrderRepositoryInterface extends BaseRepositoryInterface
     public function decrementStock(Product $product, int $quantity): bool;
 
     public function findProductById(int $productId): ?Product;
+
+    public function getUserOrders(int $userId, array $filters = []): LengthAwarePaginator;
+
+    public function getUserOrder(int $userId, int $orderId): ?Order;
+
+    public function getAllOrders(array $filters = []): LengthAwarePaginator;
+
+    public function getOrderWithRelations(int $orderId): ?Order;
 }
