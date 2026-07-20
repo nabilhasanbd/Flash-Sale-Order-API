@@ -36,14 +36,13 @@ class OrderRepository extends BaseRepository implements OrderRepositoryInterface
         ]);
     }
 
-    public function findByUserAndProduct(int $userId, int $productId): ?Order
+    public function hasActivePurchaseForProduct(int $userId, int $productId): bool
     {
-        return Order::where('user_id', $userId)
-            ->whereHas('orderItems', function ($query) use ($productId) {
-                $query->where('product_id', $productId);
-            })
-            ->where('status', 'completed')
-            ->first();
+        return $this->model->newQuery()
+            ->where('user_id', $userId)
+            ->where('product_id', $productId)
+            ->whereNotIn('status', [OrderStatus::Cancelled->value, OrderStatus::Failed->value])
+            ->exists();
     }
 
     public function decrementStock(Product $product, int $quantity): bool

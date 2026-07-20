@@ -18,7 +18,7 @@ interface OrderRepositoryInterface extends BaseRepositoryInterface
 
     public function updateOrderStatus(Order $order, OrderStatus $status, PaymentStatus $paymentStatus): bool;
 
-    public function findByUserAndProduct(int $userId, int $productId): ?Order;
+    public function hasActivePurchaseForProduct(int $userId, int $productId): bool;
 
     public function decrementStock(Product $product, int $quantity): bool;
 

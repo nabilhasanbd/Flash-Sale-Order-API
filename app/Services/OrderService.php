@@ -16,6 +16,7 @@ use App\Models\Coupon;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\User;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 
 class OrderService
@@ -45,92 +46,107 @@ class OrderService
 
         $this->validateQuantity($product, $quantity);
 
-        if ($this->orderRepository->findByUserAndProduct($user->id, $productId) !== null) {
-            throw new DuplicatePurchaseException;
-        }
-
         [$coupon, $subtotal, $discount, $totalAmount] = $this->resolvePricing($product, $quantity, $couponCode);
 
         // ---- Critical section: OrderService is the sole owner of the DB transaction ----
-        $order = DB::transaction(function () use (
-            $user,
-            $product,
-            $quantity,
-            $coupon,
-            $subtotal,
-            $discount,
-            $totalAmount
-        ) {
-            // Lock product for update and reload it to read the live stock.
-            $lockedProduct = $this->productRepository->findProductByIdForUpdate($product->id);
-
-            if ($lockedProduct === null) {
-                throw new \Exception('Product not found.');
-            }
-
-            // Re-check stock under the lock to prevent overselling.
-            if ((int) $lockedProduct->available_stock < $quantity) {
-                throw new InsufficientStockException;
-            }
-
-            $unitPrice = (float) $lockedProduct->price;
-
-            // Create the order in a pending state; it is only finalised on success.
-            $order = $this->orderRepository->createOrder([
-                'user_id' => $user->id,
-                'coupon_id' => $coupon?->id,
-                'subtotal' => $subtotal,
-                'discount' => $discount,
-                'total' => $totalAmount,
-                'payment_status' => PaymentStatus::Pending,
-                'status' => OrderStatus::Pending,
-            ]);
-
-            $this->orderRepository->createOrderItem([
-                'order_id' => $order->id,
-                'product_id' => $lockedProduct->id,
-                'quantity' => $quantity,
-                'unit_price' => $unitPrice,
-                'subtotal' => $subtotal,
-            ]);
-
-            // Create the PaymentTransaction (status = pending) bound to the wallets.
-            $paymentTransaction = $this->paymentTransactionService->createPending(
-                $order,
+        try {
+            $order = DB::transaction(function () use (
                 $user,
-                $totalAmount,
-                $lockedProduct->merchant_id
-            );
+                $product,
+                $quantity,
+                $coupon,
+                $subtotal,
+                $discount,
+                $totalAmount
+            ) {
+                // Lock product for update and reload it to read the live stock.
+                $lockedProduct = $this->productRepository->findProductByIdForUpdate($product->id);
 
-            // Move funds: customer debit -> merchant credit, with a double-entry ledger.
-            $this->walletService->transfer(
-                $paymentTransaction->customerWallet,
-                $paymentTransaction->merchantWallet,
-                $totalAmount,
-                $paymentTransaction,
-                'Flash Sale Purchase - Order #'.$order->id
-            );
+                if ($lockedProduct === null) {
+                    throw new \Exception('Product not found.');
+                }
 
-            // Reduce product stock.
-            $this->orderRepository->decrementStock($lockedProduct, $quantity);
+                // Re-check stock under the lock to prevent overselling.
+                if ((int) $lockedProduct->available_stock < $quantity) {
+                    throw new InsufficientStockException;
+                }
 
-            // Increase coupon usage.
-            if ($coupon !== null) {
-                $this->couponService->incrementUsage($coupon->id);
+                // Duplicate-purchase guard: checked AFTER acquiring the product row
+                // lock so concurrent requests for the same product serialize, and the
+                // second one observes the first request's committed order.
+                if ($this->orderRepository->hasActivePurchaseForProduct($user->id, $lockedProduct->id)) {
+                    throw new DuplicatePurchaseException;
+                }
+
+                $unitPrice = (float) $lockedProduct->price;
+
+                // Create the order in a pending state; it is only finalised on success.
+                $order = $this->orderRepository->createOrder([
+                    'user_id' => $user->id,
+                    'product_id' => $lockedProduct->id,
+                    'coupon_id' => $coupon?->id,
+                    'subtotal' => $subtotal,
+                    'discount' => $discount,
+                    'total' => $totalAmount,
+                    'payment_status' => PaymentStatus::Pending,
+                    'status' => OrderStatus::Pending,
+                ]);
+
+                $this->orderRepository->createOrderItem([
+                    'order_id' => $order->id,
+                    'product_id' => $lockedProduct->id,
+                    'quantity' => $quantity,
+                    'unit_price' => $unitPrice,
+                    'subtotal' => $subtotal,
+                ]);
+
+                // Create the PaymentTransaction (status = pending) bound to the wallets.
+                $paymentTransaction = $this->paymentTransactionService->createPending(
+                    $order,
+                    $user,
+                    $totalAmount,
+                    $lockedProduct->merchant_id
+                );
+
+                // Move funds: customer debit -> merchant credit, with a double-entry ledger.
+                $this->walletService->transfer(
+                    $paymentTransaction->customerWallet,
+                    $paymentTransaction->merchantWallet,
+                    $totalAmount,
+                    $paymentTransaction,
+                    'Flash Sale Purchase - Order #'.$order->id
+                );
+
+                // Reduce product stock.
+                $this->orderRepository->decrementStock($lockedProduct, $quantity);
+
+                // Increase coupon usage.
+                if ($coupon !== null) {
+                    $this->couponService->incrementUsage($coupon->id);
+                }
+
+                // Mark the payment successful.
+                $this->paymentTransactionService->markSuccess($paymentTransaction);
+
+                // Finalise the order.
+                $this->orderRepository->updateOrderStatus(
+                    $order,
+                    OrderStatus::Completed,
+                    PaymentStatus::Paid
+                );
+
+                return $order;
+            });
+        } catch (UniqueConstraintViolationException $e) {
+            // Database-level backstop: if two requests slipped past the
+            // application check, the partial unique index rejects the insert.
+            // Convert it into a clean domain exception (HTTP 409).
+            if (str_contains($e->getMessage(), 'orders_user_product_active_unique')) {
+                throw new DuplicatePurchaseException;
             }
 
-            // Mark the payment successful.
-            $this->paymentTransactionService->markSuccess($paymentTransaction);
-
-            // Finalise the order.
-            $this->orderRepository->updateOrderStatus(
-                $order,
-                OrderStatus::Completed,
-                PaymentStatus::Paid
-            );
-
-            return $order;
-        });
+            throw $e;
+        }
 
         // Dispatch only after the transaction has committed.
         DB::afterCommit(function () use ($order) {
