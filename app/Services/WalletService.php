@@ -2,164 +2,203 @@
 
 namespace App\Services;
 
+use App\Enums\PaymentTransactionStatus;
+use App\Enums\WalletTransactionType;
 use App\Exceptions\InsufficientBalanceException;
+use App\Exceptions\InvalidAmountException;
+use App\Exceptions\InvalidTransferException;
+use App\Exceptions\SelfTransferException;
 use App\Exceptions\WalletNotFoundException;
 use App\Interfaces\WalletRepositoryInterface;
-use App\Models\Order;
+use App\Interfaces\WalletTransactionRepositoryInterface;
+use App\Models\PaymentTransaction;
 use App\Models\User;
 use App\Models\Wallet;
+use App\Models\WalletTransaction;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Str;
 
 class WalletService
 {
     public function __construct(
         protected WalletRepositoryInterface $walletRepository,
+        protected WalletTransactionRepositoryInterface $walletTransactionRepository,
     ) {}
 
-    public function hasEnoughBalance(User $user, float $amount): bool
-    {
-        $wallet = $this->walletRepository->findByUser($user);
-
-        if ($wallet === null) {
-            throw new WalletNotFoundException();
-        }
-
-        return $wallet->balance >= $amount;
-    }
-
-    public function deductInTransaction(
-        User $user,
+    /**
+     * Move funds from the customer wallet to the merchant wallet and record
+     * a balanced double-entry ledger under the given payment transaction.
+     *
+     * The caller (OrderService) owns the database transaction; this method
+     * only locks rows and performs writes within it.
+     *
+     * @return array{
+     *     customer_wallet: Wallet,
+     *     merchant_wallet: Wallet,
+     *     debit: WalletTransaction,
+     *     credit: WalletTransaction,
+     * }
+     */
+    public function transfer(
+        Wallet $customerWallet,
+        Wallet $merchantWallet,
         float $amount,
-        int $orderId,
-        string $description = 'Flash Sale Purchase'
+        PaymentTransaction $paymentTransaction,
+        string $description
     ): array {
-        $wallet = $this->walletRepository->lockWallet($user);
+        $this->validateTransfer($customerWallet, $merchantWallet, $amount, $paymentTransaction);
 
-        if ($wallet === null) {
-            throw new WalletNotFoundException();
+        // 1. Lock the customer wallet.
+        $customerLocked = $this->walletRepository->lockForUpdate($customerWallet);
+        if ($customerLocked === null) {
+            throw new WalletNotFoundException;
         }
 
-        $balanceBefore = (float) $wallet->balance;
-
-        if ($balanceBefore < $amount) {
-            throw new InsufficientBalanceException();
+        // 2. Lock the merchant wallet.
+        $merchantLocked = $this->walletRepository->lockForUpdate($merchantWallet);
+        if ($merchantLocked === null) {
+            throw new WalletNotFoundException;
         }
 
-        $newBalance = $balanceBefore - $amount;
+        // 3. Check the customer balance (never allow negative balances).
+        $customerBalanceBefore = (float) $customerLocked->balance;
+        if ($customerBalanceBefore < $amount) {
+            throw new InsufficientBalanceException;
+        }
 
-        $this->walletRepository->updateBalance($wallet, $newBalance);
+        $merchantBalanceBefore = (float) $merchantLocked->balance;
 
-        $transaction = $this->walletRepository->createTransaction([
-            'wallet_id' => $wallet->id,
-            'order_id' => $orderId,
-            'type' => 'debit',
+        // 4. Debit the customer wallet.
+        $customerBalanceAfter = $customerBalanceBefore - $amount;
+        $this->walletRepository->updateBalance($customerLocked, $customerBalanceAfter);
+
+        // 5. Credit the merchant wallet.
+        $merchantBalanceAfter = $merchantBalanceBefore + $amount;
+        $this->walletRepository->updateBalance($merchantLocked, $merchantBalanceAfter);
+
+        $sharedReference = $this->generateReference();
+
+        // 6. Create the debit ledger entry on the customer wallet.
+        $debit = $this->walletTransactionRepository->create([
+            'wallet_id' => $customerLocked->id,
+            'payment_transaction_id' => $paymentTransaction->id,
+            'type' => WalletTransactionType::Debit,
             'amount' => $amount,
-            'balance_before' => $balanceBefore,
-            'balance_after' => $newBalance,
-            'reference' => $this->generateReference(),
+            'balance_before' => $customerBalanceBefore,
+            'balance_after' => $customerBalanceAfter,
+            'reference' => $sharedReference.'-DR',
             'description' => $description,
+            'metadata' => [
+                'transfer_reference' => $sharedReference,
+                'payment_transaction_reference' => $paymentTransaction->reference,
+                'counterparty_wallet_id' => $merchantLocked->id,
+            ],
         ]);
 
+        // 7. Create the credit ledger entry on the merchant wallet.
+        $credit = $this->walletTransactionRepository->create([
+            'wallet_id' => $merchantLocked->id,
+            'payment_transaction_id' => $paymentTransaction->id,
+            'type' => WalletTransactionType::Credit,
+            'amount' => $amount,
+            'balance_before' => $merchantBalanceBefore,
+            'balance_after' => $merchantBalanceAfter,
+            'reference' => $sharedReference.'-CR',
+            'description' => $description,
+            'metadata' => [
+                'transfer_reference' => $sharedReference,
+                'payment_transaction_reference' => $paymentTransaction->reference,
+                'counterparty_wallet_id' => $customerLocked->id,
+            ],
+        ]);
+
+        // 8. Return the updated wallets.
         return [
-            'wallet' => $wallet->fresh(),
-            'transaction' => $transaction,
+            'customer_wallet' => $customerLocked->fresh(),
+            'merchant_wallet' => $merchantLocked->fresh(),
+            'debit' => $debit,
+            'credit' => $credit,
         ];
     }
 
-    public function deduct(
-        User $user,
+    public function refund(
+        Wallet $merchantWallet,
+        Wallet $customerWallet,
         float $amount,
-        ?Order $order = null,
-        string $description = 'Flash Sale Purchase'
-    ): Wallet {
-        $wallet = $this->walletRepository->lockWallet($user);
-
-        if ($wallet === null) {
-            throw new WalletNotFoundException();
-        }
-
-        $balanceBefore = (float) $wallet->balance;
-
-        if ($balanceBefore < $amount) {
-            throw new InsufficientBalanceException();
-        }
-
-        $newBalance = $balanceBefore - $amount;
-
-        $this->walletRepository->updateBalance($wallet, $newBalance);
-
-        $this->walletRepository->createTransaction([
-            'wallet_id' => $wallet->id,
-            'order_id' => $order?->id,
-            'type' => 'debit',
-            'amount' => $amount,
-            'balance_before' => $balanceBefore,
-            'balance_after' => $newBalance,
-            'reference' => $this->generateReference(),
-            'description' => $description,
-        ]);
-
-        $wallet->refresh();
-
-        return $wallet;
+        PaymentTransaction $paymentTransaction,
+        string $description = 'Refund'
+    ): array {
+        // A refund is a transfer in the opposite direction. Using the same
+        // architecture guarantees a balanced double-entry ledger linked to a
+        // single payment transaction id.
+        return $this->transfer(
+            $merchantWallet,
+            $customerWallet,
+            $amount,
+            $paymentTransaction,
+            $description
+        );
     }
 
-    public function credit(
-        User $user,
-        float $amount,
-        string $description = 'Wallet Credit'
-    ): Wallet {
-        $wallet = $this->walletRepository->findByUser($user);
+    public function hasEnoughBalance(User $user, float $amount): bool
+    {
+        $wallet = $this->getWalletForUser($user);
 
-        if ($wallet === null) {
-            throw new WalletNotFoundException();
-        }
-
-        $balanceBefore = (float) $wallet->balance;
-        $newBalance = $balanceBefore + $amount;
-
-        $this->walletRepository->updateBalance($wallet, $newBalance);
-
-        $this->walletRepository->createTransaction([
-            'wallet_id' => $wallet->id,
-            'order_id' => null,
-            'type' => 'credit',
-            'amount' => $amount,
-            'balance_before' => $balanceBefore,
-            'balance_after' => $newBalance,
-            'reference' => $this->generateReference(),
-            'description' => $description,
-        ]);
-
-        $wallet->refresh();
-
-        return $wallet;
+        return (float) $wallet->balance >= $amount;
     }
 
     public function getBalance(User $user): float
     {
-        $wallet = $this->walletRepository->findByUser($user);
-
-        if ($wallet === null) {
-            throw new WalletNotFoundException();
-        }
-
-        return (float) $wallet->balance;
+        return (float) $this->getWalletForUser($user)->balance;
     }
 
     public function getStatement(User $user, int $perPage = 15): LengthAwarePaginator
     {
+        $wallet = $this->getWalletForUser($user);
+
+        return $this->walletTransactionRepository->paginateForWallet($wallet, $perPage);
+    }
+
+    public function getLedgerForPaymentTransaction(PaymentTransaction $paymentTransaction): Collection
+    {
+        return $this->walletTransactionRepository->findByPaymentTransaction($paymentTransaction->id);
+    }
+
+    protected function getWalletForUser(User $user): Wallet
+    {
         $wallet = $this->walletRepository->findByUser($user);
 
         if ($wallet === null) {
-            throw new WalletNotFoundException();
+            throw new WalletNotFoundException;
         }
 
-        return $this->walletRepository->getTransactions($wallet, $perPage);
+        return $wallet;
     }
 
-    private function generateReference(): string
+    protected function validateTransfer(
+        Wallet $customerWallet,
+        Wallet $merchantWallet,
+        float $amount,
+        PaymentTransaction $paymentTransaction
+    ): void {
+        if ($amount <= 0) {
+            throw new InvalidAmountException;
+        }
+
+        if ($customerWallet->is($merchantWallet)) {
+            throw new SelfTransferException;
+        }
+
+        if ($paymentTransaction->status === PaymentTransactionStatus::Failed
+            || $paymentTransaction->status === PaymentTransactionStatus::Reversed
+        ) {
+            throw new InvalidTransferException('The payment transaction is not usable.');
+        }
+    }
+
+    protected function generateReference(): string
     {
-        return 'WTX-'.date('Ymd').'-'.str_pad((string) mt_rand(1, 99999), 5, '0', STR_PAD_LEFT);
+        return 'WTX-'.now()->format('Ymd').'-'.strtoupper(Str::random(10));
     }
 }

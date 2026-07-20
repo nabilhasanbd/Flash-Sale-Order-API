@@ -5,8 +5,6 @@ namespace App\Repositories;
 use App\Interfaces\WalletRepositoryInterface;
 use App\Models\User;
 use App\Models\Wallet;
-use App\Models\WalletTransaction;
-use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 class WalletRepository extends BaseRepository implements WalletRepositoryInterface
 {
@@ -15,28 +13,26 @@ class WalletRepository extends BaseRepository implements WalletRepositoryInterfa
         parent::__construct($wallet);
     }
 
+    public function findById(int $id): ?Wallet
+    {
+        return $this->model->find($id);
+    }
+
     public function findByUser(User $user): ?Wallet
     {
         return $this->model->where('user_id', $user->id)->first();
     }
 
-    public function lockWallet(User $user): ?Wallet
+    public function lockForUpdate(Wallet $wallet): ?Wallet
     {
-        return $this->model->where('user_id', $user->id)->lockForUpdate()->first();
+        return $this->model
+            ->whereKey($wallet->id)
+            ->lockForUpdate()
+            ->first();
     }
 
     public function updateBalance(Wallet $wallet, float $newBalance): bool
     {
         return $wallet->update(['balance' => $newBalance]);
-    }
-
-    public function createTransaction(array $transactionData): WalletTransaction
-    {
-        return WalletTransaction::create($transactionData);
-    }
-
-    public function getTransactions(Wallet $wallet, int $perPage = 15): LengthAwarePaginator
-    {
-        return $wallet->transactions()->paginate($perPage);
     }
 }

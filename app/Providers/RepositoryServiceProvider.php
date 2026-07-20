@@ -2,6 +2,23 @@
 
 namespace App\Providers;
 
+use App\Interfaces\CouponRepositoryInterface;
+use App\Interfaces\OrderRepositoryInterface;
+use App\Interfaces\PaymentTransactionRepositoryInterface;
+use App\Interfaces\ProductRepositoryInterface;
+use App\Interfaces\WalletRepositoryInterface;
+use App\Interfaces\WalletTransactionRepositoryInterface;
+use App\Repositories\CouponRepository;
+use App\Repositories\OrderRepository;
+use App\Repositories\PaymentTransactionRepository;
+use App\Repositories\ProductRepository;
+use App\Repositories\WalletRepository;
+use App\Repositories\WalletTransactionRepository;
+use App\Services\CouponService;
+use App\Services\CustomerProductService;
+use App\Services\OrderService;
+use App\Services\PaymentTransactionService;
+use App\Services\WalletService;
 use Illuminate\Support\ServiceProvider;
 
 class RepositoryServiceProvider extends ServiceProvider
@@ -9,61 +26,82 @@ class RepositoryServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->bind(
-            \App\Interfaces\ProductRepositoryInterface::class,
-            \App\Repositories\ProductRepository::class,
+            ProductRepositoryInterface::class,
+            ProductRepository::class,
         );
 
         $this->app->bind(
-            \App\Interfaces\OrderRepositoryInterface::class,
-            \App\Repositories\OrderRepository::class,
+            OrderRepositoryInterface::class,
+            OrderRepository::class,
         );
 
         $this->app->bind(
-            \App\Interfaces\WalletRepositoryInterface::class,
-            \App\Repositories\WalletRepository::class,
+            WalletRepositoryInterface::class,
+            WalletRepository::class,
         );
 
         $this->app->bind(
-            \App\Interfaces\CouponRepositoryInterface::class,
-            \App\Repositories\CouponRepository::class,
+            WalletTransactionRepositoryInterface::class,
+            WalletTransactionRepository::class,
+        );
+
+        $this->app->bind(
+            PaymentTransactionRepositoryInterface::class,
+            PaymentTransactionRepository::class,
+        );
+
+        $this->app->bind(
+            CouponRepositoryInterface::class,
+            CouponRepository::class,
         );
 
         $this->app->singleton(
-            \App\Services\CustomerProductService::class,
+            CustomerProductService::class,
             function ($app) {
-                return new \App\Services\CustomerProductService(
-                    $app->make(\App\Interfaces\ProductRepositoryInterface::class)
+                return new CustomerProductService(
+                    $app->make(ProductRepositoryInterface::class)
                 );
             }
         );
 
         $this->app->singleton(
-            \App\Services\CouponService::class,
+            CouponService::class,
             function ($app) {
-                return new \App\Services\CouponService(
-                    $app->make(\App\Interfaces\CouponRepositoryInterface::class)
+                return new CouponService(
+                    $app->make(CouponRepositoryInterface::class)
                 );
             }
         );
 
         $this->app->singleton(
-            \App\Services\WalletService::class,
+            WalletService::class,
             function ($app) {
-                return new \App\Services\WalletService(
-                    $app->make(\App\Interfaces\WalletRepositoryInterface::class)
+                return new WalletService(
+                    $app->make(WalletRepositoryInterface::class),
+                    $app->make(WalletTransactionRepositoryInterface::class)
                 );
             }
         );
 
         $this->app->singleton(
-            \App\Services\OrderService::class,
+            PaymentTransactionService::class,
             function ($app) {
-                return new \App\Services\OrderService(
-                    $app->make(\App\Interfaces\OrderRepositoryInterface::class),
-                    $app->make(\App\Interfaces\ProductRepositoryInterface::class),
-                    $app->make(\App\Interfaces\WalletRepositoryInterface::class),
-                    $app->make(\App\Interfaces\CouponRepositoryInterface::class),
-                    $app->make(\App\Services\CouponService::class)
+                return new PaymentTransactionService(
+                    $app->make(PaymentTransactionRepositoryInterface::class),
+                    $app->make(WalletRepositoryInterface::class)
+                );
+            }
+        );
+
+        $this->app->singleton(
+            OrderService::class,
+            function ($app) {
+                return new OrderService(
+                    $app->make(OrderRepositoryInterface::class),
+                    $app->make(ProductRepositoryInterface::class),
+                    $app->make(CouponService::class),
+                    $app->make(PaymentTransactionService::class),
+                    $app->make(WalletService::class)
                 );
             }
         );

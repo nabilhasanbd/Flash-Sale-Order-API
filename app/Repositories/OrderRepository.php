@@ -2,6 +2,8 @@
 
 namespace App\Repositories;
 
+use App\Enums\OrderStatus;
+use App\Enums\PaymentStatus;
 use App\Interfaces\OrderRepositoryInterface;
 use App\Models\Order;
 use App\Models\OrderItem;
@@ -24,6 +26,14 @@ class OrderRepository extends BaseRepository implements OrderRepositoryInterface
     public function createOrderItem(array $orderItemData): OrderItem
     {
         return OrderItem::create($orderItemData);
+    }
+
+    public function updateOrderStatus(Order $order, OrderStatus $status, PaymentStatus $paymentStatus): bool
+    {
+        return $order->update([
+            'status' => $status,
+            'payment_status' => $paymentStatus,
+        ]);
     }
 
     public function findByUserAndProduct(int $userId, int $productId): ?Order
@@ -111,10 +121,10 @@ class OrderRepository extends BaseRepository implements OrderRepositoryInterface
         if (isset($filters['search'])) {
             $query->where(function ($q) use ($filters) {
                 $q->whereHas('user', function ($subQuery) use ($filters) {
-                    $subQuery->where('name', 'ilike', '%' . $filters['search'] . '%')
-                        ->orWhere('email', 'ilike', '%' . $filters['search'] . '%');
+                    $subQuery->where('name', 'ilike', '%'.$filters['search'].'%')
+                        ->orWhere('email', 'ilike', '%'.$filters['search'].'%');
                 })->orWhereHas('orderItems.product', function ($subQuery) use ($filters) {
-                    $subQuery->where('name', 'ilike', '%' . $filters['search'] . '%');
+                    $subQuery->where('name', 'ilike', '%'.$filters['search'].'%');
                 });
             });
         }

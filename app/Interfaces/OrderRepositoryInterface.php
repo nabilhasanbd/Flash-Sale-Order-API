@@ -2,6 +2,8 @@
 
 namespace App\Interfaces;
 
+use App\Enums\OrderStatus;
+use App\Enums\PaymentStatus;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
@@ -13,6 +15,8 @@ interface OrderRepositoryInterface extends BaseRepositoryInterface
     public function createOrder(array $orderData): Order;
 
     public function createOrderItem(array $orderItemData): OrderItem;
+
+    public function updateOrderStatus(Order $order, OrderStatus $status, PaymentStatus $paymentStatus): bool;
 
     public function findByUserAndProduct(int $userId, int $productId): ?Order;
 

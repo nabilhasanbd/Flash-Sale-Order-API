@@ -2,19 +2,19 @@
 
 namespace App\Services;
 
-use App\Interfaces\CouponRepositoryInterface;
-use App\Interfaces\OrderRepositoryInterface;
-use App\Interfaces\ProductRepositoryInterface;
-use App\Interfaces\WalletRepositoryInterface;
+use App\Enums\OrderStatus;
+use App\Enums\PaymentStatus;
 use App\Events\OrderPlaced;
 use App\Exceptions\DuplicatePurchaseException;
 use App\Exceptions\FlashSaleNotActiveException;
-use App\Exceptions\InsufficientBalanceException;
 use App\Exceptions\InsufficientStockException;
 use App\Exceptions\MaximumQuantityExceededException;
 use App\Exceptions\ProductInactiveException;
+use App\Interfaces\OrderRepositoryInterface;
+use App\Interfaces\ProductRepositoryInterface;
 use App\Models\Coupon;
 use App\Models\Order;
+use App\Models\Product;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
@@ -23,9 +23,9 @@ class OrderService
     public function __construct(
         protected OrderRepositoryInterface $orderRepository,
         protected ProductRepositoryInterface $productRepository,
-        protected WalletRepositoryInterface $walletRepository,
-        protected CouponRepositoryInterface $couponRepository,
         protected CouponService $couponService,
+        protected PaymentTransactionService $paymentTransactionService,
+        protected WalletService $walletService,
     ) {}
 
     public function placeOrder(
@@ -34,131 +34,156 @@ class OrderService
         int $quantity,
         ?string $couponCode = null
     ): Order {
-        $subtotal = 0;
-        $discount = 0;
-        $coupon = null;
+        // ---- Read-only validation (no locks, no transaction yet) ----
+        $product = $this->productRepository->findProduct($productId);
 
-        if ($couponCode !== null) {
-            $coupon = $this->couponService->validateCoupon($couponCode, 0);
-            $discountData = $this->couponService->calculateDiscount($coupon, $subtotal);
-            $discount = (float) $discountData['discount'];
+        if ($product === null) {
+            throw new \Exception('Product not found.');
         }
 
+        $this->validateProduct($product);
+
+        $this->validateQuantity($product, $quantity);
+
+        if ($this->orderRepository->findByUserAndProduct($user->id, $productId) !== null) {
+            throw new DuplicatePurchaseException;
+        }
+
+        [$coupon, $subtotal, $discount, $totalAmount] = $this->resolvePricing($product, $quantity, $couponCode);
+
+        // ---- Critical section: OrderService is the sole owner of the DB transaction ----
         $order = DB::transaction(function () use (
             $user,
-            $productId,
+            $product,
             $quantity,
             $coupon,
+            $subtotal,
             $discount,
-            $couponCode
+            $totalAmount
         ) {
-            $product = $this->productRepository->findProductByIdForUpdate($productId);
+            // Lock product for update and reload it to read the live stock.
+            $lockedProduct = $this->productRepository->findProductByIdForUpdate($product->id);
 
-            if ($product === null) {
+            if ($lockedProduct === null) {
                 throw new \Exception('Product not found.');
             }
 
-            if (!$product->isActive()) {
-                throw new ProductInactiveException();
+            // Re-check stock under the lock to prevent overselling.
+            if ((int) $lockedProduct->available_stock < $quantity) {
+                throw new InsufficientStockException;
             }
 
-            if (!$product->isFlashSaleRunning()) {
-                throw new FlashSaleNotActiveException();
-            }
+            $unitPrice = (float) $lockedProduct->price;
 
-            $maxQuantity = $product->flash_sale_max_quantity_per_order ?? 3;
-            if ($quantity > $maxQuantity) {
-                throw new MaximumQuantityExceededException($maxQuantity, $quantity);
-            }
-
-            $availableStock = (int) $product->available_stock;
-
-            if ($availableStock < $quantity) {
-                throw new InsufficientStockException();
-            }
-
-            $unitPrice = (float) $product->price;
-            $subtotal = $unitPrice * $quantity;
-
-            $totalAmount = $subtotal;
-
-            if ($coupon !== null) {
-                $discountData = $this->couponService->calculateDiscount($coupon, $subtotal);
-                $discount = (float) $discountData['discount'];
-                $totalAmount = $subtotal - $discount;
-            }
-
-            $existingOrder = $this->orderRepository->findByUserAndProduct($user->id, $productId);
-
-            if ($existingOrder !== null) {
-                throw new DuplicatePurchaseException();
-            }
-
-            $wallet = $this->walletRepository->lockWallet($user);
-
-            if ($wallet === null) {
-                throw new \Exception('Wallet not found.');
-            }
-
-            $walletBalance = (float) $wallet->balance;
-
-            if ($walletBalance < $totalAmount) {
-                throw new InsufficientBalanceException();
-            }
-
-            $newWalletBalance = $walletBalance - $totalAmount;
-
-            $this->walletRepository->updateBalance($wallet, $newWalletBalance);
-
+            // Create the order in a pending state; it is only finalised on success.
             $order = $this->orderRepository->createOrder([
                 'user_id' => $user->id,
                 'coupon_id' => $coupon?->id,
                 'subtotal' => $subtotal,
                 'discount' => $discount,
                 'total' => $totalAmount,
-                'payment_status' => 'paid',
-                'status' => 'completed',
+                'payment_status' => PaymentStatus::Pending,
+                'status' => OrderStatus::Pending,
             ]);
 
-            $orderData = [
+            $this->orderRepository->createOrderItem([
                 'order_id' => $order->id,
-                'product_id' => $productId,
+                'product_id' => $lockedProduct->id,
                 'quantity' => $quantity,
                 'unit_price' => $unitPrice,
                 'subtotal' => $subtotal,
-            ];
+            ]);
 
-            $this->orderRepository->createOrderItem($orderData);
+            // Create the PaymentTransaction (status = pending) bound to the wallets.
+            $paymentTransaction = $this->paymentTransactionService->createPending(
+                $order,
+                $user,
+                $totalAmount,
+                $lockedProduct->merchant_id
+            );
 
-            $this->orderRepository->decrementStock($product, $quantity);
+            // Move funds: customer debit -> merchant credit, with a double-entry ledger.
+            $this->walletService->transfer(
+                $paymentTransaction->customerWallet,
+                $paymentTransaction->merchantWallet,
+                $totalAmount,
+                $paymentTransaction,
+                'Flash Sale Purchase - Order #'.$order->id
+            );
 
+            // Reduce product stock.
+            $this->orderRepository->decrementStock($lockedProduct, $quantity);
+
+            // Increase coupon usage.
             if ($coupon !== null) {
-                $this->couponRepository->incrementUsage($coupon->id);
+                $this->couponService->incrementUsage($coupon->id);
             }
 
-            $this->walletRepository->createTransaction([
-                'wallet_id' => $wallet->id,
-                'order_id' => $order->id,
-                'type' => 'debit',
-                'amount' => $totalAmount,
-                'balance_before' => $walletBalance,
-                'balance_after' => $newWalletBalance,
-                'reference' => $this->generateTransactionReference(),
-                'description' => 'Flash Sale Purchase',
-            ]);
+            // Mark the payment successful.
+            $this->paymentTransactionService->markSuccess($paymentTransaction);
+
+            // Finalise the order.
+            $this->orderRepository->updateOrderStatus(
+                $order,
+                OrderStatus::Completed,
+                PaymentStatus::Paid
+            );
 
             return $order;
         });
 
+        // Dispatch only after the transaction has committed.
         DB::afterCommit(function () use ($order) {
             event(new OrderPlaced($order));
         });
 
-        return $order;
+        return $order->fresh()->load([
+            'orderItems.product',
+            'paymentTransaction.walletTransactions',
+        ]);
     }
 
-    private function generateTransactionReference(): string
+    protected function validateProduct(Product $product): void
     {
-        return 'WTX-'.date('Ymd').'-'.str_pad((string) mt_rand(1, 99999), 5, '0', STR_PAD_LEFT);
+        if (! $product->isActive()) {
+            throw new ProductInactiveException;
+        }
+
+        if (! $product->isFlashSaleRunning()) {
+            throw new FlashSaleNotActiveException;
+        }
+    }
+
+    protected function validateQuantity(Product $product, int $quantity): void
+    {
+        $maxQuantity = $product->flash_sale_max_quantity_per_order ?? 3;
+
+        if ($quantity > $maxQuantity) {
+            throw new MaximumQuantityExceededException($maxQuantity, $quantity);
+        }
+
+        if ((int) $product->available_stock < $quantity) {
+            throw new InsufficientStockException;
+        }
+    }
+
+    /**
+     * Validate the coupon (if any) and calculate the final amount.
+     *
+     * @return array{0: ?Coupon, 1: float, 2: float, 3: float}
+     */
+    protected function resolvePricing(Product $product, int $quantity, ?string $couponCode): array
+    {
+        $subtotal = (float) $product->price * $quantity;
+        $discount = 0.0;
+        $coupon = null;
+
+        if ($couponCode !== null) {
+            $coupon = $this->couponService->validateCoupon($couponCode, $subtotal);
+            $discountData = $this->couponService->calculateDiscount($coupon, $subtotal);
+            $discount = (float) $discountData['discount'];
+        }
+
+        return [$coupon, $subtotal, $discount, $subtotal - $discount];
     }
 }

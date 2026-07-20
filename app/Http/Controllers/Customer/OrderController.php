@@ -31,7 +31,7 @@ class OrderController extends Controller
     {
         $result = $this->orderHistoryService->show($request->user(), $order);
 
-        if (!$result['success']) {
+        if (! $result['success']) {
             return response()->json($result, 404);
         }
 
@@ -59,7 +59,11 @@ class OrderController extends Controller
             ),
         );
 
-        $order->load('orderItems.product');
+        $order->load([
+            'user',
+            'orderItems.product',
+            'paymentTransaction.walletTransactions',
+        ]);
 
         if ($replayed) {
             return $this->resourceResponse(

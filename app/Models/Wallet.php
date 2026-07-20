@@ -2,14 +2,15 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class Wallet extends Model
 {
     use HasFactory;
+
     protected $fillable = [
         'user_id',
         'balance',
@@ -27,5 +28,15 @@ class Wallet extends Model
     public function transactions(): HasMany
     {
         return $this->hasMany(WalletTransaction::class)->latest();
+    }
+
+    public function paymentTransactionsAsCustomer(): HasMany
+    {
+        return $this->hasMany(PaymentTransaction::class, 'customer_wallet_id');
+    }
+
+    public function paymentTransactionsAsMerchant(): HasMany
+    {
+        return $this->hasMany(PaymentTransaction::class, 'merchant_wallet_id');
     }
 }
