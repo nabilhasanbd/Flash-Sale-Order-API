@@ -21,7 +21,7 @@ class OrderRepository extends BaseRepository implements OrderRepositoryInterface
         return Order::create($orderData);
     }
 
-    public function createOrderItem(array $orderItemData): array
+    public function createOrderItem(array $orderItemData): OrderItem
     {
         return OrderItem::create($orderItemData);
     }

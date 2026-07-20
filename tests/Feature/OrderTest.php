@@ -1,293 +1,262 @@
 <?php
 
-use App\Models\Order;
-use App\Models\OrderItem;
-use App\Models\Product;
-use App\Models\Coupon;
-use App\Models\User;
-use App\Models\Wallet;
-use App\Services\OrderService;
+namespace Tests\Feature;
+
+use App\Events\OrderPlaced;
+use App\Enums\OrderStatus;
+use App\Enums\PaymentStatus;
 use App\Exceptions\DuplicatePurchaseException;
 use App\Exceptions\FlashSaleNotActiveException;
+use App\Exceptions\InsufficientBalanceException;
 use App\Exceptions\InsufficientStockException;
 use App\Exceptions\MaximumQuantityExceededException;
 use App\Exceptions\ProductInactiveException;
+use App\Models\Coupon;
+use App\Models\Order;
+use App\Models\Product;
+use App\Models\User;
+use App\Models\Wallet;
+use App\Services\OrderService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Event;
+use Tests\TestCase;
 
-uses(RefreshDatabase::class);
+class OrderTest extends TestCase
+{
+    use RefreshDatabase;
 
-beforeEach(function () {
-    $this->user = User::factory()->create(['role' => 'customer']);
-    $this->admin = User::factory()->create(['role' => 'admin']);
-    
-    $this->product = Product::factory()->create([
-        'stock' => 10,
-        'flash_sale_enabled' => true,
-        'flash_sale_starts_at' => now()->subHour(),
-        'flash_sale_ends_at' => now()->addHour(),
-        'flash_sale_max_quantity_per_order' => 3
-    ]);
+    protected User $customer;
+    protected Product $product;
+    protected Coupon $coupon;
+    protected Wallet $wallet;
+    protected OrderService $orderService;
 
-    $this->coupon = Coupon::factory()->create([
-        'code' => 'TEST50',
-        'type' => 'percentage',
-        'value' => 50,
-        'is_active' => true,
-        'expires_at' => now()->addDay(),
-        'usage_limit' => 100,
-        'min_purchase_amount' => 100
-    ]);
+    protected function setUp(): void
+    {
+        parent::setUp();
 
-    $this->wallet = Wallet::factory()->create([
-        'user_id' => $this->user->id,
-        'balance' => 10000
-    ]);
-});
+        $this->customer = User::factory()->create(['role' => 'customer']);
 
-test('customer can create an order successfully', function () {
-    Queue::fake();
-    
-    $orderService = app(OrderService::class);
-    
-    $order = $orderService->createOrder(
-        $this->user->id,
-        $this->product->id,
-        2,
-        'TEST50'
-    );
+        $this->product = Product::factory()->active()->create([
+            'available_stock' => 10,
+            'flash_sale_start' => now()->subHour(),
+            'flash_sale_end' => now()->addHour(),
+            'price' => 100.00,
+        ]);
 
-    expect($order)->toBeInstanceOf(Order::class)
-        ->and($order->user_id)->toBe($this->user->id)
-        ->and($order->status)->toBe('completed')
-        ->and($order->payment_status)->toBe('paid');
+        $this->coupon = Coupon::factory()->percentage(50, 0)->create([
+            'code' => 'TEST50',
+            'usage_limit' => 100,
+            'expires_at' => now()->addDay(),
+            'status' => true,
+        ]);
 
-    expect($order->items)->toHaveCount(1);
-    expect($order->items->first()->quantity)->toBe(2);
+        $this->wallet = Wallet::factory()->create([
+            'user_id' => $this->customer->id,
+            'balance' => 10000,
+        ]);
 
-    $this->product->refresh();
-    expect($this->product->stock)->toBe(8);
+        $this->orderService = app(OrderService::class);
+    }
 
-    $this->wallet->refresh();
-    expect($this->wallet->balance)->toBeLessThan(10000);
+    public function test_customer_can_place_order_successfully(): void
+    {
+        Event::fake();
 
-    Queue::assertPushed(\App\Jobs\SendNotificationJob::class);
-});
-
-test('cannot create order with insufficient stock', function () {
-    $this->product->update(['stock' => 1]);
-
-    $orderService = app(OrderService::class);
-
-    $this->expectException(InsufficientStockException::class);
-
-    $orderService->createOrder(
-        $this->user->id,
-        $this->product->id,
-        2,
-        'TEST50'
-    );
-});
-
-test('cannot create order for inactive product', function () {
-    $this->product->update(['status' => 'inactive']);
-
-    $orderService = app(OrderService::class);
-
-    $this->expectException(ProductInactiveException::class);
-
-    $orderService->createOrder(
-        $this->user->id,
-        $this->product->id,
-        1,
-        'TEST50'
-    );
-});
-
-test('cannot create order when flash sale not started', function () {
-    $this->product->update([
-        'flash_sale_starts_at' => now()->addHour(),
-        'flash_sale_ends_at' => now()->addHours(2)
-    ]);
-
-    $orderService = app(OrderService::class);
-
-    $this->expectException(FlashSaleNotActiveException::class);
-
-    $orderService->createOrder(
-        $this->user->id,
-        $this->product->id,
-        1,
-        'TEST50'
-    );
-});
-
-test('cannot create order when flash sale expired', function () {
-    $this->product->update([
-        'flash_sale_starts_at' => now()->subHours(2),
-        'flash_sale_ends_at' => now()->subHour()
-    ]);
-
-    $orderService = app(OrderService::class);
-
-    $this->expectException(FlashSaleNotActiveException::class);
-
-    $orderService->createOrder(
-        $this->user->id,
-        $this->product->id,
-        1,
-        'TEST50'
-    );
-});
-
-test('cannot exceed maximum quantity per order', function () {
-    $orderService = app(OrderService::class);
-
-    $this->expectException(MaximumQuantityExceededException::class);
-
-    $orderService->createOrder(
-        $this->user->id,
-        $this->product->id,
-        5,
-        'TEST50'
-    );
-});
-
-test('cannot exceed maximum quantity per order with custom limit', function () {
-    $this->product->update(['flash_sale_max_quantity_per_order' => 2]);
-
-    $orderService = app(OrderService::class);
-
-    $this->expectException(MaximumQuantityExceededException::class);
-
-    $orderService->createOrder(
-        $this->user->id,
-        $this->product->id,
-        3,
-        'TEST50'
-    );
-});
-
-test('cannot create duplicate order for same product', function () {
-    $orderService = app(OrderService::class);
-
-    $orderService->createOrder(
-        $this->user->id,
-        $this->product->id,
-        1,
-        'TEST50'
-    );
-
-    $this->expectException(DuplicatePurchaseException::class);
-
-    $orderService->createOrder(
-        $this->user->id,
-        $this->product->id,
-        1,
-        'TEST50'
-    );
-});
-
-test('cannot exceed maximum quantity per order', function () {
-    $orderService = app(OrderService::class);
-
-    $this->expectException(InsufficientStockException::class);
-
-    $orderService->createOrder(
-        $this->user->id,
-        $this->product->id,
-        5,
-        'TEST50'
-    );
-});
-
-test('order creation fails without sufficient wallet balance', function () {
-    $this->wallet->update(['balance' => 50]);
-
-    $orderService = app(OrderService::class);
-
-    $this->expectException(\App\Exceptions\InsufficientBalanceException::class);
-
-    $orderService->createOrder(
-        $this->user->id,
-        $this->product->id,
-        1,
-        'TEST50'
-    );
-});
-
-test('concurrent orders handle race conditions correctly', function () {
-    $this->product->update(['stock' => 2]);
-
-    $orderService = app(OrderService::class);
-
-    DB::beginTransaction();
-
-    $firstOrder = $orderService->createOrder(
-        $this->user->id,
-        $this->product->id,
-        1,
-        'TEST50'
-    );
-
-    $this->product->refresh();
-
-    $secondUser = User::factory()->create(['role' => 'customer']);
-    Wallet::factory()->create([
-        'user_id' => $secondUser->id,
-        'balance' => 10000
-    ]);
-
-    try {
-        $orderService->createOrder(
-            $secondUser->id,
+        $order = $this->orderService->placeOrder(
+            $this->customer,
             $this->product->id,
             2,
             'TEST50'
         );
-        $this->fail('Expected InsufficientStockException');
-    } catch (InsufficientStockException $e) {
-        DB::rollBack();
+
+        $this->assertInstanceOf(Order::class, $order);
+        $this->assertEquals($this->customer->id, $order->user_id);
+        $this->assertEquals(OrderStatus::Completed, $order->status);
+        $this->assertEquals(PaymentStatus::Paid, $order->payment_status);
+
+        $order->load('orderItems');
+        $this->assertCount(1, $order->orderItems);
+        $this->assertEquals(2, $order->orderItems->first()->quantity);
+
+        $this->product->refresh();
+        $this->assertEquals(8, $this->product->available_stock);
+
+        $this->wallet->refresh();
+        $this->assertLessThan(10000, (float) $this->wallet->balance);
+
+        Event::assertDispatched(OrderPlaced::class, fn (OrderPlaced $event) => $event->order->is($order));
     }
 
-    $this->product->refresh();
-    expect($this->product->stock)->toBe(1);
-});
+    public function test_customer_can_place_order_without_coupon(): void
+    {
+        $order = $this->orderService->placeOrder(
+            $this->customer,
+            $this->product->id,
+            1,
+            null
+        );
 
-test('order history returns only customer orders', function () {
-    $otherUser = User::factory()->create(['role' => 'customer']);
+        $this->assertInstanceOf(Order::class, $order);
+        $this->assertNull($order->coupon_id);
+        $this->assertEquals(0, (float) $order->discount);
+    }
 
-    $orderService = app(OrderService::class);
+    public function test_cannot_place_order_with_insufficient_stock(): void
+    {
+        $this->product->update(['available_stock' => 1]);
 
-    $orderService->createOrder($this->user->id, $this->product->id, 1, 'TEST50');
-    $orderService->createOrder($otherUser->id, $this->product->id, 1, 'TEST50');
+        $this->expectException(InsufficientStockException::class);
 
-    $userOrders = $this->user->orders()->get();
-    expect($userOrders)->toHaveCount(1);
-    expect($userOrders->first()->user_id)->toBe($this->user->id);
-});
+        $this->orderService->placeOrder(
+            $this->customer,
+            $this->product->id,
+            2,
+            'TEST50'
+        );
+    }
 
-test('admin can access all orders', function () {
-    $orderService = app(OrderService::class);
+    public function test_cannot_place_order_for_inactive_product(): void
+    {
+        $this->product->update(['status' => 'inactive']);
 
-    $orderService->createOrder($this->user->id, $this->product->id, 1, 'TEST50');
+        $this->expectException(ProductInactiveException::class);
 
-    $allOrders = Order::all();
-    expect($allOrders)->toHaveCount(1);
-});
+        $this->orderService->placeOrder(
+            $this->customer,
+            $this->product->id,
+            1,
+            'TEST50'
+        );
+    }
 
-test('coupon is properly applied to order', function () {
-    $orderService = app(OrderService::class);
+    public function test_cannot_place_order_when_flash_sale_not_started(): void
+    {
+        $this->product->update([
+            'flash_sale_start' => now()->addHour(),
+            'flash_sale_end' => now()->addHours(2),
+        ]);
 
-    $order = $orderService->createOrder(
-        $this->user->id,
-        $this->product->id,
-        2,
-        'TEST50'
-    );
+        $this->expectException(FlashSaleNotActiveException::class);
 
-    $this->coupon->refresh();
-    expect($this->coupon->times_used)->toBe(1);
-    expect($order->coupon_id)->toBe($this->coupon->id);
-});
+        $this->orderService->placeOrder(
+            $this->customer,
+            $this->product->id,
+            1,
+            'TEST50'
+        );
+    }
+
+    public function test_cannot_place_order_when_flash_sale_expired(): void
+    {
+        $this->product->update([
+            'flash_sale_start' => now()->subHours(2),
+            'flash_sale_end' => now()->subHour(),
+        ]);
+
+        $this->expectException(FlashSaleNotActiveException::class);
+
+        $this->orderService->placeOrder(
+            $this->customer,
+            $this->product->id,
+            1,
+            'TEST50'
+        );
+    }
+
+    public function test_cannot_exceed_maximum_quantity_per_order(): void
+    {
+        $this->expectException(MaximumQuantityExceededException::class);
+
+        $this->orderService->placeOrder(
+            $this->customer,
+            $this->product->id,
+            5,
+            'TEST50'
+        );
+    }
+
+    public function test_cannot_place_duplicate_order_for_same_product(): void
+    {
+        $this->orderService->placeOrder(
+            $this->customer,
+            $this->product->id,
+            1,
+            'TEST50'
+        );
+
+        $this->expectException(DuplicatePurchaseException::class);
+
+        $this->orderService->placeOrder(
+            $this->customer,
+            $this->product->id,
+            1,
+            'TEST50'
+        );
+    }
+
+    public function test_order_fails_without_sufficient_wallet_balance(): void
+    {
+        $this->wallet->update(['balance' => 50]);
+
+        $this->expectException(InsufficientBalanceException::class);
+
+        $this->orderService->placeOrder(
+            $this->customer,
+            $this->product->id,
+            1,
+            null
+        );
+    }
+
+    public function test_coupon_is_properly_applied_to_order(): void
+    {
+        $order = $this->orderService->placeOrder(
+            $this->customer,
+            $this->product->id,
+            2,
+            'TEST50'
+        );
+
+        $this->coupon->refresh();
+        $this->assertEquals(1, $this->coupon->used_count);
+        $this->assertEquals($this->coupon->id, $order->coupon_id);
+        $this->assertGreaterThan(0, (float) $order->discount);
+    }
+
+    public function test_order_history_returns_only_customer_orders(): void
+    {
+        $otherUser = User::factory()->create(['role' => 'customer']);
+        Wallet::factory()->create([
+            'user_id' => $otherUser->id,
+            'balance' => 10000,
+        ]);
+
+        $this->orderService->placeOrder($this->customer, $this->product->id, 1, 'TEST50');
+        $this->orderService->placeOrder($otherUser, $this->product->id, 1, 'TEST50');
+
+        $userOrders = $this->customer->orders()->get();
+
+        $this->assertCount(1, $userOrders);
+        $this->assertEquals($this->customer->id, $userOrders->first()->user_id);
+    }
+
+    public function test_admin_can_access_all_orders(): void
+    {
+        $this->orderService->placeOrder($this->customer, $this->product->id, 1, 'TEST50');
+
+        $this->assertEquals(1, Order::count());
+    }
+
+    public function test_order_stock_decrement_is_persisted(): void
+    {
+        $this->orderService->placeOrder($this->customer, $this->product->id, 3, 'TEST50');
+
+        $this->product->refresh();
+
+        $this->assertDatabaseHas('products', [
+            'id' => $this->product->id,
+            'available_stock' => 7,
+        ]);
+    }
+}

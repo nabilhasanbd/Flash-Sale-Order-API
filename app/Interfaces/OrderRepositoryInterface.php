@@ -3,6 +3,7 @@
 namespace App\Interfaces;
 
 use App\Models\Order;
+use App\Models\OrderItem;
 use App\Models\Product;
 use App\Repositories\BaseRepositoryInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -11,7 +12,7 @@ interface OrderRepositoryInterface extends BaseRepositoryInterface
 {
     public function createOrder(array $orderData): Order;
 
-    public function createOrderItem(array $orderItemData): array;
+    public function createOrderItem(array $orderItemData): OrderItem;
 
     public function findByUserAndProduct(int $userId, int $productId): ?Order;
 
