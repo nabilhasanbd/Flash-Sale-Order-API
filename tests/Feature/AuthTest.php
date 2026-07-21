@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\User;
-use App\Models\Wallet;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -171,7 +170,7 @@ class AuthTest extends TestCase
         $user = User::factory()->create();
         $token = $user->createToken('auth_token')->plainTextToken;
 
-        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
             ->postJson('/api/logout');
 
         $response->assertStatus(200)
@@ -195,7 +194,7 @@ class AuthTest extends TestCase
         $user = User::factory()->create();
         $token = $user->createToken('auth_token')->plainTextToken;
 
-        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
             ->getJson('/api/me');
 
         $response->assertStatus(200)
@@ -214,6 +213,16 @@ class AuthTest extends TestCase
     public function test_guest_cannot_retrieve_profile(): void
     {
         $response = $this->getJson('/api/me');
+
+        $response->assertStatus(401);
+    }
+
+    public function test_guest_cannot_place_order(): void
+    {
+        $response = $this->postJson('/api/orders', [
+            'product_id' => 1,
+            'quantity' => 1,
+        ]);
 
         $response->assertStatus(401);
     }

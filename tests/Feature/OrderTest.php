@@ -2,9 +2,9 @@
 
 namespace Tests\Feature;
 
-use App\Events\OrderPlaced;
 use App\Enums\OrderStatus;
 use App\Enums\PaymentStatus;
+use App\Events\OrderPlaced;
 use App\Exceptions\DuplicatePurchaseException;
 use App\Exceptions\FlashSaleNotActiveException;
 use App\Exceptions\InsufficientBalanceException;
@@ -26,9 +26,13 @@ class OrderTest extends TestCase
     use RefreshDatabase;
 
     protected User $customer;
+
     protected Product $product;
+
     protected Coupon $coupon;
+
     protected Wallet $wallet;
+
     protected OrderService $orderService;
 
     protected function setUp(): void
@@ -54,6 +58,13 @@ class OrderTest extends TestCase
         $this->wallet = Wallet::factory()->create([
             'user_id' => $this->customer->id,
             'balance' => 10000,
+        ]);
+
+        // Merchant wallet required for the wallet-to-wallet transfer.
+        $merchant = User::factory()->create(['role' => 'merchant']);
+        Wallet::factory()->create([
+            'user_id' => $merchant->id,
+            'balance' => 0,
         ]);
 
         $this->orderService = app(OrderService::class);

@@ -2,18 +2,25 @@
 
 namespace Tests\Feature;
 
-use App\Models\Coupon;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\User;
 use App\Models\Wallet;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class IdempotentOrderTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Merchant wallet required by the wallet-to-wallet transfer.
+        $merchant = User::factory()->create(['role' => 'merchant']);
+        Wallet::factory()->create(['user_id' => $merchant->id, 'balance' => 0]);
+    }
 
     private function authHeader(User $user): array
     {
