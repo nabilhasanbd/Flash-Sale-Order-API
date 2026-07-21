@@ -24,7 +24,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/wallet/transactions', [WalletController::class, 'transactions']);
 
     Route::prefix('orders')->group(function () {
-        Route::post('/', [CustomerOrderController::class, 'store']);
+        Route::post('/', [CustomerOrderController::class, 'store'])->middleware('throttle:orders');
         Route::get('/', [CustomerOrderController::class, 'index']);
         Route::get('/{order}', [CustomerOrderController::class, 'show']);
     });

@@ -25,5 +25,12 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('auth-login', function (Request $request) {
             return Limit::perMinute(5)->by($request->input('email').'|'.$request->ip());
         });
+
+        // Limit how many orders a single customer can attempt per minute, to
+        // protect the flash-sale endpoint from abuse/botting. Keyed by the
+        // authenticated user (falling back to IP when unauthenticated).
+        RateLimiter::for('orders', function (Request $request) {
+            return Limit::perMinute(10)->by($request->user()?->id ?: $request->ip());
+        });
     }
 }

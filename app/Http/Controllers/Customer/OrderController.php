@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Customer;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreOrderRequest;
 use App\Http\Resources\OrderResource;
+use App\Models\Order;
 use App\Services\IdempotencyService;
 use App\Services\OrderHistoryService;
 use App\Services\OrderService;
@@ -22,6 +23,8 @@ class OrderController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', Order::class);
+
         $result = $this->orderHistoryService->index($request->user());
 
         return response()->json($result, 200);
@@ -40,6 +43,8 @@ class OrderController extends Controller
 
     public function store(StoreOrderRequest $request): JsonResponse
     {
+        $this->authorize('create', Order::class);
+
         $key = $request->header('Idempotency-Key');
 
         $payload = $request->only(['product_id', 'quantity', 'coupon_code']);
