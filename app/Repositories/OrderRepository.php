@@ -36,12 +36,13 @@ class OrderRepository extends BaseRepository implements OrderRepositoryInterface
         ]);
     }
 
-    public function hasActivePurchaseForProduct(int $userId, int $productId): bool
+    public function hasActivePurchaseForProduct(int $userId, int $productId, ?int $excludeOrderId = null): bool
     {
         return $this->model->newQuery()
             ->where('user_id', $userId)
             ->where('product_id', $productId)
             ->whereNotIn('status', [OrderStatus::Cancelled->value, OrderStatus::Failed->value])
+            ->when($excludeOrderId !== null, fn ($q) => $q->where('id', '!=', $excludeOrderId))
             ->exists();
     }
 

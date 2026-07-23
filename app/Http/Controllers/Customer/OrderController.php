@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Customer;
 
+use App\Enums\OrderStatus;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreOrderRequest;
 use App\Http\Resources\OrderResource;
@@ -11,7 +12,6 @@ use App\Services\OrderHistoryService;
 use App\Services\OrderService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Symfony\Component\HttpFoundation\Response;
 
 class OrderController extends Controller
 {
@@ -77,10 +77,18 @@ class OrderController extends Controller
             );
         }
 
+        if ($order->status === OrderStatus::Pending) {
+            return $this->resourceResponse(
+                new OrderResource($order),
+                'Order is being processed.',
+                202,
+            );
+        }
+
         return $this->resourceResponse(
             new OrderResource($order),
             'Order placed successfully.',
-            Response::HTTP_CREATED,
+            201,
         );
     }
 }
